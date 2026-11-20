@@ -12,6 +12,15 @@ type CareerAnalysis = {
   networking_message: string;
 };
 
+type ChatMessage = { role: "user" | "assistant"; content: string };
+
+type ChatResponse = {
+  status?: string;
+  model?: string;
+  reply?: string;
+  detail?: string | { msg?: string }[];
+};
+
 type AnalysisResponse = {
   status: string;
   message: string;
@@ -90,6 +99,52 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
+  const [chatInput, setChatInput] = useState("");
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [chatModel, setChatModel] = useState("");
+
+  async function handleChat(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const question = chatInput.trim();
+    if (!question || chatLoading) return;
+    const previousHistory = chatHistory;
+    setChatInput("");
+    setChatError("");
+    setChatLoading(true);
+    setChatHistory([...previousHistory, { role: "user", content: question }]);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: question,
+          history: previousHistory.slice(-8),
+          skills: skills.trim(),
+          experience: experience.trim(),
+          job_description: jobDescription.trim(),
+        }),
+      });
+      const data: ChatResponse = await response.json();
+      if (!response.ok || !data.reply) {
+        const detail = typeof data.detail === "string" ? data.detail : "AI assistant could not respond.";
+        throw new Error(detail);
+      }
+      setChatHistory((current) => [...current, {
+        role: "assistant",
+        content: data.reply!.replace(/\\n/g, "\n"),
+      }]);
+      setChatModel(data.model ?? "");
+    } catch (err) {
+      setChatHistory(previousHistory);
+      setChatInput(question);
+      setChatError(err instanceof Error ? err.message : "Unable to connect to AI assistant.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
 
   async function handleAnalyze() {
     if (!skills.trim() || !jobDescription.trim()) {
@@ -305,6 +360,55 @@ export default function Home() {
             ? "Analyzing with AI..."
             : "Analyze Career Readiness"}
         </button>
+
+        <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" aria-label="AI Career Assistant">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold">CyberTrace AI Career Assistant</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Ask about internships, skills, or your career plan. Your current form entries provide context.
+              </p>
+            </div>
+            <button type="button" disabled={chatLoading || chatHistory.length === 0}
+              onClick={() => { setChatHistory([]); setChatError(""); setChatModel(""); }}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">
+              Clear conversation
+            </button>
+          </div>
+          <div role="log" aria-live="polite" aria-label="Conversation"
+            className="mt-5 max-h-96 min-h-48 space-y-3 overflow-y-auto rounded-lg bg-slate-50 p-4">
+            {chatHistory.length === 0 && (
+              <p className="text-sm text-slate-500">Start by asking: What should I learn to become a SOC Analyst?</p>
+            )}
+            {chatHistory.map((item, index) => (
+              <div key={index} className={`flex ${item.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[90%] whitespace-pre-wrap break-words rounded-xl px-4 py-3 text-sm leading-6 ${
+                  item.role === "user" ? "bg-blue-700 text-white" : "border border-slate-200 bg-white text-slate-800"
+                }`}>
+                  <p className="mb-1 text-xs font-semibold opacity-75">{item.role === "user" ? "You" : "Career Assistant"}</p>
+                  {item.content}
+                </div>
+              </div>
+            ))}
+            {chatLoading && <p className="text-sm text-slate-500">Career Assistant is thinking...</p>}
+          </div>
+          {chatError && <p role="alert" className="mt-3 text-sm text-red-700">{chatError}</p>}
+          <form onSubmit={handleChat} className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <label htmlFor="chatInput" className="sr-only">Ask the Career Assistant</label>
+            <input id="chatInput" type="text" maxLength={3000} value={chatInput}
+              onChange={(event) => setChatInput(event.target.value)}
+              placeholder="Ask a career question..."
+              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-4 py-3 text-sm focus:border-blue-500 focus:outline-none" />
+            <button type="submit" disabled={chatLoading || !chatInput.trim()}
+              className="rounded-lg bg-blue-700 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50">
+              {chatLoading ? "Thinking..." : "Send"}
+            </button>
+          </form>
+          <p className="mt-3 text-xs text-slate-500">
+            {chatModel ? `Model: ${chatModel}. ` : ""}Conversations are stored only in this browser session's page state and disappear on refresh.
+            AI advice may be inaccurate; verify qualifications before using them.
+          </p>
+        </section>
 
         {error && (
           <div
