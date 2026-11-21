@@ -1,12 +1,12 @@
 
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -129,5 +129,17 @@ export default function LoginPage() {
         Back to CyberTrace AI
       </Link>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <main className="flex min-h-screen items-center justify-center">
+        <p>Loading sign-in page...</p>
+      </main>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
