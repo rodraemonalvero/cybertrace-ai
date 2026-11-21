@@ -2,6 +2,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+
 type CareerAnalysis = {
   job_requirements: string[];
   matching_qualifications: string[];
@@ -193,7 +195,7 @@ export default function Home() {
     setChatLoading(true);
     setChatHistory([...previousHistory, { role: "user", content: question }]);
     try {
-      const response = await fetch("http\://127.0.0.1:8000/chat", {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -239,7 +241,7 @@ export default function Home() {
     setCopyStatus("");
     try {
       const response = await fetch(
-        "http\://127.0.0.1:8000/analyze",
+        `${API_BASE_URL}/analyze`,
         {
           method: "POST",
           headers: {
