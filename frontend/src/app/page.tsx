@@ -1,8 +1,7 @@
-
 "use client";
-
-import { useState } from "react";
-
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 type CareerAnalysis = {
   job_requirements: string[];
   matching_qualifications: string[];
@@ -11,16 +10,13 @@ type CareerAnalysis = {
   recommendations: string[];
   networking_message: string;
 };
-
 type ChatMessage = { role: "user" | "assistant"; content: string };
-
 type ChatResponse = {
   status?: string;
   model?: string;
   reply?: string;
   detail?: string | { msg?: string }[];
 };
-
 type AnalysisResponse = {
   status: string;
   message: string;
@@ -29,7 +25,6 @@ type AnalysisResponse = {
   analysis?: CareerAnalysis;
   detail?: string;
 };
-
 function ReportCard({
   title,
   description,
@@ -49,7 +44,6 @@ function ReportCard({
     amber: "border-amber-200 bg-amber-50",
     purple: "border-purple-200 bg-purple-50",
   };
-
   return (
     <section
       className={`rounded-xl border p-5 ${styles[color]}`}
@@ -57,11 +51,9 @@ function ReportCard({
       <h3 className="text-lg font-semibold text-slate-900">
         {title}
       </h3>
-
       <p className="mt-1 text-sm text-slate-600">
         {description}
       </p>
-
       {items.length > 0 ? (
         <ul className="mt-4 space-y-2">
           {items.map((item, index) => (
@@ -81,19 +73,59 @@ function ReportCard({
     </section>
   );
 }
-
 export default function Home() {
+  const [accountLoading, setAccountLoading] = useState(true);
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
+  useEffect(() => {
+    const supabase = createClient();
+    let active = true;
+    async function checkAccount() {
+      const { data, error } = await supabase.auth.getUser();
+      if (!active) return;
+      setAccountEmail(error ? null : data.user?.email ?? null);
+      setAccountError(error ? "Unable to verify your login session." : "");
+      setAccountLoading(false);
+    }
+    void checkAccount();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      void checkAccount();
+    });
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+  async function handleSignOut() {
+    setSigningOut(true);
+    setAccountError("");
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setAccountEmail(null);
+      setAnalysis(null);
+      setReport("");
+      setNetworkingMessage("");
+      setChatHistory([]);
+      setSkills("");
+      setExperience("");
+      setJobDescription("");
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : "Sign out failed.");
+    } finally {
+      setSigningOut(false);
+    }
+  }
   const [skills, setSkills] = useState("");
   const [experience, setExperience] = useState("");
   const [jobDescription, setJobDescription] = useState("");
-
   const [analysis, setAnalysis] =
     useState<CareerAnalysis | null>(null);
-
   const [report, setReport] = useState("");
   const [networkingMessage, setNetworkingMessage] =
     useState("");
-
   const [model, setModel] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -104,7 +136,53 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const [chatModel, setChatModel] = useState("");
-
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileStatus, setProfileStatus] = useState("");
+  // Load only the signed-in student's saved career information.
+  // The job description stays separate and is never overwritten.
+  useEffect(() => {
+    let active = true;
+    async function loadSavedProfile() {
+      try {
+        const supabase = createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        if (!active) return;
+        if (!user) {
+          setProfileStatus("Sign in to load your saved career profile.");
+          return;
+        }
+        const { data, error: profileError } = await supabase
+          .from("career_profiles")
+          .select("skills, coursework, projects, experience")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (profileError) throw profileError;
+        if (!active) return;
+        if (data) {
+          const combinedSkills = [data.skills, data.coursework]
+            .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            .join("\n\nCoursework: ");
+          const combinedExperience = [data.projects, data.experience]
+            .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            .join("\n\nExperience: ");
+          setSkills(combinedSkills);
+          setExperience(combinedExperience);
+          setProfileStatus("Saved career profile loaded. You can edit these fields before using AI.");
+        } else {
+          setProfileStatus("No saved career profile yet. Create one using My Profile.");
+        }
+      } catch (err) {
+        if (active) setProfileStatus(
+          err instanceof Error ? `Could not load profile: ${err.message}` : "Could not load saved career profile."
+        );
+      } finally {
+        if (active) setProfileLoading(false);
+      }
+    }
+    void loadSavedProfile();
+    return () => { active = false; };
+  }, []);
   async function handleChat(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const question = chatInput.trim();
@@ -115,7 +193,7 @@ export default function Home() {
     setChatLoading(true);
     setChatHistory([...previousHistory, { role: "user", content: question }]);
     try {
-      const response = await fetch("http://127.0.0.1:8000/chat", {
+      const response = await fetch("http\://127.0.0.1:8000/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -144,8 +222,6 @@ export default function Home() {
       setChatLoading(false);
     }
   }
-
-
   async function handleAnalyze() {
     if (!skills.trim() || !jobDescription.trim()) {
       setError(
@@ -153,7 +229,6 @@ export default function Home() {
       );
       return;
     }
-
     setLoading(true);
     setError("");
     setMessage("");
@@ -162,10 +237,9 @@ export default function Home() {
     setNetworkingMessage("");
     setModel("");
     setCopyStatus("");
-
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/analyze",
+        "http\://127.0.0.1:8000/analyze",
         {
           method: "POST",
           headers: {
@@ -178,10 +252,8 @@ export default function Home() {
           }),
         }
       );
-
       const data: AnalysisResponse =
         await response.json();
-
       if (!response.ok) {
         throw new Error(
           typeof data.detail === "string"
@@ -189,13 +261,11 @@ export default function Home() {
             : "The analysis could not be completed."
         );
       }
-
       if (!data.analysis) {
         throw new Error(
           "The backend did not return structured analysis."
         );
       }
-
       setAnalysis(data.analysis);
       setReport(data.report ?? "");
       setNetworkingMessage(
@@ -213,7 +283,6 @@ export default function Home() {
       setLoading(false);
     }
   }
-
   async function copyText(
     text: string,
     successMessage: string
@@ -227,12 +296,10 @@ export default function Home() {
       );
     }
   }
-
   function buildUpdatedReport() {
     if (!analysis) {
       return report;
     }
-
     return [
       "CYBERTRACE AI - CAREER READINESS REPORT",
       "",
@@ -262,39 +329,62 @@ export default function Home() {
       "AI-generated suggestions require verification.",
     ].join("\n");
   }
-
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-10 text-slate-900 sm:px-6">
       <div className="mx-auto max-w-6xl">
+        <section aria-label="Account status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">CyberTrace AI Account</p>
+            {accountLoading ? (
+              <p className="text-sm text-slate-600">Checking your login session...</p>
+            ) : accountEmail ? (
+              <p className="text-sm text-green-700">Signed in as {accountEmail}</p>
+            ) : (
+              <p className="text-sm text-slate-600">Not signed in</p>
+            )}
+            {accountError && <p role="alert" className="text-sm text-red-700">{accountError}</p>}
+          </div>
+          {accountEmail ? (
+            <button type="button" onClick={handleSignOut} disabled={signingOut} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
+              {signingOut ? "Signing out..." : "Sign Out"}
+            </button>
+          ) : !accountLoading ? (
+            <div className="flex gap-3 text-sm">
+              <Link href="/login" className="font-semibold text-blue-700 underline">Sign In</Link>
+              <Link href="/register" className="font-semibold text-blue-700 underline">Register</Link>
+            </div>
+          ) : null}
+        </section>
+        <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+          <Link href="/profile" className="font-semibold text-blue-700 underline">My Career Profile</Link>
+          <p role="status" className="text-slate-600">
+            {profileLoading ? "Loading saved career profile..." : profileStatus}
+          </p>
+        </div>
         <header className="mb-8">
           <p className="mb-2 text-sm font-bold uppercase tracking-widest text-blue-700">
             CyberTrace AI
           </p>
-
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
             Discover Your Career Readiness
           </h1>
-
           <p className="mt-3 max-w-3xl text-slate-600">
             Compare your academic skills, projects, and
             experience with internship and entry-level job
             requirements using AI.
           </p>
         </header>
-
         <div className="grid gap-6 md:grid-cols-2">
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="mb-5 text-lg font-semibold">
               Student Information
             </h2>
-
             <label
               htmlFor="skills"
               className="mb-2 block text-sm font-medium"
             >
               Skills and Coursework
             </label>
-
             <textarea
               id="skills"
               value={skills}
@@ -305,14 +395,12 @@ export default function Home() {
               placeholder="Python, SQL, Linux, cybersecurity..."
               className="mb-5 h-32 w-full rounded-lg border border-slate-300 p-3 text-sm focus:border-blue-500 focus:outline-none"
             />
-
             <label
               htmlFor="experience"
               className="mb-2 block text-sm font-medium"
             >
               Projects and Experience
             </label>
-
             <textarea
               id="experience"
               value={experience}
@@ -324,19 +412,16 @@ export default function Home() {
               className="h-32 w-full rounded-lg border border-slate-300 p-3 text-sm focus:border-blue-500 focus:outline-none"
             />
           </section>
-
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="mb-5 text-lg font-semibold">
               Internship or Job Description
             </h2>
-
             <label
               htmlFor="jobDescription"
               className="mb-2 block text-sm font-medium"
             >
               Paste the Job Description
             </label>
-
             <textarea
               id="jobDescription"
               value={jobDescription}
@@ -349,7 +434,6 @@ export default function Home() {
             />
           </section>
         </div>
-
         <button
           type="button"
           onClick={handleAnalyze}
@@ -360,7 +444,6 @@ export default function Home() {
             ? "Analyzing with AI..."
             : "Analyze Career Readiness"}
         </button>
-
         <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" aria-label="AI Career Assistant">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -409,7 +492,6 @@ export default function Home() {
             AI advice may be inaccurate; verify qualifications before using them.
           </p>
         </section>
-
         {error && (
           <div
             role="alert"
@@ -418,7 +500,6 @@ export default function Home() {
             {error}
           </div>
         )}
-
         {message && (
           <div
             role="status"
@@ -427,7 +508,6 @@ export default function Home() {
             {message}
           </div>
         )}
-
         {analysis && (
           <div className="mt-10 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -440,14 +520,12 @@ export default function Home() {
                   next steps.
                 </p>
               </div>
-
               {model && (
                 <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800">
                   AI Model: {model}
                 </span>
               )}
             </div>
-
             <div className="grid gap-5 md:grid-cols-2">
               <ReportCard
                 title="Matching Qualifications"
@@ -456,7 +534,6 @@ export default function Home() {
                 emptyMessage="No confirmed matches identified."
                 color="green"
               />
-
               <ReportCard
                 title="Related Experience — Verify"
                 description="Relevant project experience that may support a job requirement."
@@ -464,7 +541,6 @@ export default function Home() {
                 emptyMessage="No related experience requiring verification was identified."
                 color="blue"
               />
-
               <ReportCard
                 title="Missing or Unverified Skills"
                 description="Job requirements not demonstrated in the information provided."
@@ -472,7 +548,6 @@ export default function Home() {
                 emptyMessage="No unverified requirements were identified among the extracted skills."
                 color="amber"
               />
-
               <ReportCard
                 title="Recommended Improvements"
                 description="Suggested activities to improve your readiness."
@@ -481,17 +556,14 @@ export default function Home() {
                 color="purple"
               />
             </div>
-
             <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="text-xl font-semibold">
                 Professional Networking Message
               </h3>
-
               <p className="mt-2 text-sm text-slate-600">
                 Edit this draft before sending it to a
                 recruiter or hiring manager.
               </p>
-
               <textarea
                 aria-label="Editable networking message"
                 value={networkingMessage}
@@ -501,7 +573,6 @@ export default function Home() {
                 rows={12}
                 className="mt-4 w-full rounded-lg border border-slate-300 bg-white p-4 text-sm leading-7 focus:border-blue-500 focus:outline-none"
               />
-
               <button
                 type="button"
                 onClick={() =>
@@ -515,7 +586,6 @@ export default function Home() {
                 Copy Networking Message
               </button>
             </section>
-
             <div className="flex flex-wrap items-center gap-4">
               <button
                 type="button"
@@ -529,7 +599,6 @@ export default function Home() {
               >
                 Copy Full Report
               </button>
-
               {copyStatus && (
                 <p
                   role="status"
@@ -539,7 +608,6 @@ export default function Home() {
                 </p>
               )}
             </div>
-
             <p className="text-xs leading-6 text-slate-500">
               CyberTrace AI provides educational career
               guidance. Skill classifications and AI-generated
